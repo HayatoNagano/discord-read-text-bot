@@ -36,7 +36,7 @@ client.on('messageCreate', async (message) => {
   const voiceChannel = message.member.voice?.channel;
 
   // ===== joinコマンドでVC常駐 =====
-  if (message.content === '!join') {
+  if (message.content === '!in') {
     if (!voiceChannel) return message.reply('❗VCに入ってから `!join` を使ってください。');
 
     connection = joinVoiceChannel({
@@ -52,7 +52,7 @@ client.on('messageCreate', async (message) => {
   }
 
   // ===== leaveコマンドで退出 =====
-  if (message.content === '!leave') {
+  if (message.content === '!out') {
     if (connection) {
       connection.destroy();
       connection = null;
