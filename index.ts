@@ -6,8 +6,6 @@ const {
   createAudioResource,
   AudioPlayerStatus,
   StreamType,
-  entersState,
-  VoiceConnectionStatus,
 } = require('@discordjs/voice');
 const axios = require('axios');
 const fs = require('fs');
@@ -26,6 +24,10 @@ let isReading = false;
 let connection = null;
 const player = createAudioPlayer();
 
+// 再生待ちキュー
+const speechQueue = [];
+let isPlaying = false;
+
 client.once('ready', () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
 });
@@ -35,9 +37,9 @@ client.on('messageCreate', async (message) => {
 
   const voiceChannel = message.member.voice?.channel;
 
-  // ===== joinコマンドでVC常駐 =====
+  // === VC参加 ===
   if (message.content === '!in') {
-    if (!voiceChannel) return message.reply('❗VCに入ってから `!join` を使ってください。');
+    if (!voiceChannel) return message.reply('❗VCに入ってから `!in` を使ってください。');
 
     connection = joinVoiceChannel({
       channelId: voiceChannel.id,
@@ -51,12 +53,13 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  // ===== leaveコマンドで退出 =====
+  // === VC退出 ===
   if (message.content === '!out') {
     if (connection) {
       connection.destroy();
       connection = null;
       isReading = false;
+      speechQueue.length = 0;
       message.reply('👋 VCから退出しました。');
     } else {
       message.reply('❗まだVCに参加していません。');
@@ -64,20 +67,37 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  // ===== 読み上げ処理 =====
+  // === 読み上げ対象外 ===
   if (!isReading || !connection) return;
   if (!voiceChannel || voiceChannel.id !== connection.joinConfig.channelId) return;
 
   const rawText = message.content.trim();
   if (!rawText) return;
 
-  // === 猫語変換 ===
   const text = convertToNeko(rawText);
-
   if (!text) return;
 
+  // 🎤 読み上げキューに追加
+  const speaker = process.env.SPEAKER_ID ? Number(process.env.SPEAKER_ID) : 3;
+  enqueueSpeech(text, speaker);
+});
+
+// 🎶 読み上げをキューに追加
+async function enqueueSpeech(text, speaker) {
+  speechQueue.push({ text, speaker });
+  if (!isPlaying) playNextInQueue();
+}
+
+async function playNextInQueue() {
+  if (speechQueue.length === 0) {
+    isPlaying = false;
+    return;
+  }
+
+  isPlaying = true;
+  const { text, speaker } = speechQueue.shift();
+
   try {
-    const speaker = process.env.SPEAKER_ID ? Number(process.env.SPEAKER_ID) : 3;
     const query = await axios.post(
       'http://127.0.0.1:50021/audio_query',
       null,
@@ -103,19 +123,17 @@ client.on('messageCreate', async (message) => {
     player.play(resource);
     player.once(AudioPlayerStatus.Idle, () => {
       fs.unlinkSync(tempPath);
+      playNextInQueue();
     });
   } catch (err) {
     console.error('TTSエラー:', err);
-    message.reply('🚨 読み上げに失敗しました。VOICEVOXが起動しているか確認してください。');
+    isPlaying = false;
   }
-});
+}
 
-client.login(process.env.DISCORD_TOKEN);
-
+// 🐱 猫語変換
 function convertToNeko(text) {
   let nekoText = text;
-
-  // よくある表現を先に猫語に変換
   nekoText = nekoText.replace(/(だよ|だね|だな)(?![ぁ-んァ-ン])/g, 'にゃ');
   nekoText = nekoText.replace(/(です|でしょ|でしょう)/g, 'にゃ');
   nekoText = nekoText.replace(/(ます|ましょう|ません)/g, 'にゃん');
@@ -123,17 +141,16 @@ function convertToNeko(text) {
   nekoText = nekoText.replace(/してください/g, 'してにゃん');
   nekoText = nekoText.replace(/してる/g, 'してるにゃ');
   nekoText = nekoText.replace(/して/g, 'してにゃ');
-
-  // 文末の記号を猫語に変換
   nekoText = nekoText
     .replace(/[。．\.]/g, 'にゃ。')
     .replace(/[！!]/g, 'にゃ！')
     .replace(/[？?]/g, 'にゃ？');
 
-  // 語尾ににゃがなければつける（安全策）
   if (!nekoText.trim().endsWith('にゃ') && !nekoText.includes('にゃ')) {
     nekoText += 'にゃ';
   }
 
   return nekoText;
 }
+
+client.login(process.env.DISCORD_TOKEN);
